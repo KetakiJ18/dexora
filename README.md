@@ -31,6 +31,7 @@ asl-project/
 ```
 git clone https://github.com/KetakiJ18/asl_trainer.git
 cd asl-project
+.\venv\Scripts\activate
 pip install -r requirements.txt
 python main.py
 ```
@@ -38,8 +39,10 @@ python main.py
 ### How to use Dexora?
 - run
 ``` python main.py```  
-- Build the word given or request a new word.
-- Sign and submit.
+- Sign and build the word given or request a new word.
+- To use a new word or submit the current word, hover over their respective buttons
+- To add spaces hold up both palms opened
+- To backspace, wipe from right to left 
 - To exit the app, connect both index fingers and hold. 
 **IT'S THAT EASY**
 
