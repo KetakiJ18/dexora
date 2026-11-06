@@ -2,7 +2,7 @@ streamlit
 streamlit-webrtc
 av
 mediapipe==0.10.35
-opencv-python-headless
+opencv-python-headless==4.11.0.86
 pandas
 scikit-learn
 joblib
