@@ -1,5 +1,8 @@
+streamlit
+streamlit-webrtc
+av
 mediapipe==0.10.9
-opencv-python
-pandas 
-scikit-learn 
+opencv-python-headless
+pandas
+scikit-learn
 joblib

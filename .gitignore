@@ -2,3 +2,4 @@ hand_detect.ipynb
 venv
 asl_landmarks_backup.csv
 __pycache__/
+train_test_data
