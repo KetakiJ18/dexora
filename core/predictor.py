@@ -1,6 +1,8 @@
+from pathlib import Path
 import joblib
 
-model = joblib.load("train_test_data\\models\\asl_model.pkl")
+ROOT_DIR = Path(__file__).resolve().parent.parent
 
-def predict(data):
-    return model.predict(data)[0]
+MODEL_PATH = ROOT_DIR / "train_test_data" / "models" / "asl_model.pkl"
+
+model = joblib.load(MODEL_PATH)
