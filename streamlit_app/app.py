@@ -10,43 +10,77 @@ sys.path.append(
 import streamlit as st
 import av
 import cv2
-import random
+import time
 
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 
-# Learning page
-
-# Existing modules
+# Core
 from core.landmark_processor import process_landmarks
 from core.predictor import predict
 from core.smoothing import smooth_prediction
 from core.word_builder import update_word
 import core.word_builder as word_builder
 
-from handlers.gesture_handler import handle_one_hand
+# UI
+from ui.display import draw_text, draw_buttons
+from ui.buttons import get_hovered_button
+from ui.progress import draw_hover_progress
 
+# Game
+import game.game_manager as game
+from core.word_game import generate_word, check_match
+
+# Handlers
+from handlers.gesture_handler import handle_one_hand, handle_two_hands
+from gestures.exit_gesture import check_exit
+
+# MediaPipe
 import mediapipe as mp
 
 
 mp_hands = mp.solutions.hands
+mp_draw = mp.solutions.drawing_utils
 
 
 # =========================================================
-# WORD GAME VIDEO PROCESSOR
+# ASL VIDEO PROCESSOR
 # =========================================================
 
 class ASLProcessor(VideoProcessorBase):
 
     def __init__(self):
-        self.hands = mp_hands.Hands(max_num_hands=1)
-        self.prev_pred = ""
+
+        self.hands = mp_hands.Hands(
+            max_num_hands=2
+        )
+
+        self.final_pred = ""
+
+        self.hover_start = None
+        self.hover_target = None
+
+        self.HOVER_TIME = 1.5
+
+        self.cursor_visible = True
+        self.last_blink = time.time()
+
+    # =====================================================
+    # FRAME PROCESSING
+    # =====================================================
 
     def recv(self, frame):
 
         img = frame.to_ndarray(format="bgr24")
 
+        # -------------------------------------------------
         # Mirror camera
+        # -------------------------------------------------
+
         img = cv2.flip(img, 1)
+
+        # -------------------------------------------------
+        # MediaPipe
+        # -------------------------------------------------
 
         rgb = cv2.cvtColor(
             img,
@@ -55,33 +89,289 @@ class ASLProcessor(VideoProcessorBase):
 
         results = self.hands.process(rgb)
 
+        # -------------------------------------------------
+        # Cursor blink
+        # -------------------------------------------------
+
+        if time.time() - self.last_blink > 0.5:
+
+            self.cursor_visible = not self.cursor_visible
+            self.last_blink = time.time()
+
+        hovering = None
+
+        # =================================================
+        # HAND DETECTION
+        # =================================================
+
         if results.multi_hand_landmarks:
 
-            hand = results.multi_hand_landmarks[0]
-
-            # Existing landmark processing
-            data = process_landmarks(hand)
-
-            # Existing prediction
-            pred = predict(data)
-
-            # Existing smoothing
-            final_pred = smooth_prediction(pred)
-
-            # Existing word builder
-            handle_one_hand(
-                hand,
-                img,
-                final_pred,
-                update_word
+            num_hands = len(
+                results.multi_hand_landmarks
             )
 
-            # Draw landmarks
-            mp.solutions.drawing_utils.draw_landmarks(
-                img,
-                hand,
-                mp_hands.HAND_CONNECTIONS
-            )
+            # =================================================
+            # ONE HAND
+            # =================================================
+
+            if num_hands == 1:
+
+                hand = results.multi_hand_landmarks[0]
+
+                # Draw landmarks
+                mp_draw.draw_landmarks(
+                    img,
+                    hand,
+                    mp_hands.HAND_CONNECTIONS
+                )
+
+                # ---------------------------------------------
+                # Landmark processing
+                # ---------------------------------------------
+
+                data = process_landmarks(hand)
+
+                # ---------------------------------------------
+                # Prediction
+                # ---------------------------------------------
+
+                pred = predict(data)
+
+                # ---------------------------------------------
+                # Smoothing
+                # ---------------------------------------------
+
+                self.final_pred = smooth_prediction(pred)
+
+                # ---------------------------------------------
+                # Word builder / gesture handling
+                # ---------------------------------------------
+
+                handle_one_hand(
+                    hand,
+                    img,
+                    self.final_pred,
+                    update_word
+                )
+
+                # ---------------------------------------------
+                # Hover detection
+                # ---------------------------------------------
+
+                h, w, _ = img.shape
+
+                hovering = get_hovered_button(
+                    hand,
+                    w,
+                    h
+                )
+
+                # =================================================
+                # BUTTON HOVER
+                # =================================================
+
+                if hovering:
+
+                    if self.hover_target != hovering:
+
+                        self.hover_start = time.time()
+                        self.hover_target = hovering
+
+                    elapsed = (
+                        time.time()
+                        - self.hover_start
+                    )
+
+                    # Fingertip position
+                    index_tip = hand.landmark[8]
+
+                    cx = int(index_tip.x * w)
+                    cy = int(index_tip.y * h)
+
+                    # Draw hover progress
+                    draw_hover_progress(
+                        img,
+                        (cx, cy),
+                        elapsed,
+                        self.HOVER_TIME
+                    )
+
+                    # -----------------------------------------
+                    # Button activated
+                    # -----------------------------------------
+
+                    if elapsed > self.HOVER_TIME:
+
+                        self.hover_start = None
+                        self.hover_target = None
+
+                        # Submit
+                        if hovering == "submit":
+
+                            game.submit_word(
+                                word_builder.word,
+                                check_match
+                            )
+
+                            word_builder.word = ""
+                            word_builder.cursor_pos = 0
+
+                        # New word
+                        elif hovering == "new":
+
+                            game.new_game(
+                                generate_word
+                            )
+
+                            word_builder.word = ""
+                            word_builder.cursor_pos = 0
+
+                else:
+
+                    self.hover_start = None
+                    self.hover_target = None
+
+            # =================================================
+            # TWO HANDS
+            # =================================================
+
+            elif num_hands == 2:
+
+                left_hand = None
+                right_hand = None
+
+                # ---------------------------------------------
+                # Identify left/right hands
+                # ---------------------------------------------
+
+                for i, handedness in enumerate(
+                    results.multi_handedness
+                ):
+
+                    label = (
+                        handedness
+                        .classification[0]
+                        .label
+                    )
+
+                    if label == "Left":
+
+                        left_hand = (
+                            results.multi_hand_landmarks[i]
+                        )
+
+                    else:
+
+                        right_hand = (
+                            results.multi_hand_landmarks[i]
+                        )
+
+                # ---------------------------------------------
+                # Both hands available
+                # ---------------------------------------------
+
+                if left_hand and right_hand:
+
+                    # Draw landmarks
+                    mp_draw.draw_landmarks(
+                        img,
+                        left_hand,
+                        mp_hands.HAND_CONNECTIONS
+                    )
+
+                    mp_draw.draw_landmarks(
+                        img,
+                        right_hand,
+                        mp_hands.HAND_CONNECTIONS
+                    )
+
+                    # -----------------------------------------
+                    # Exit gesture
+                    # -----------------------------------------
+
+                    exit_flag, exit_elapsed = check_exit(
+                        left_hand,
+                        right_hand,
+                        img
+                    )
+
+                    # -----------------------------------------
+                    # Exit progress
+                    # -----------------------------------------
+
+                    if exit_elapsed > 0:
+
+                        h, w, _ = img.shape
+
+                        lx = int(
+                            left_hand.landmark[8].x * w
+                        )
+
+                        ly = int(
+                            left_hand.landmark[8].y * h
+                        )
+
+                        rx = int(
+                            right_hand.landmark[8].x * w
+                        )
+
+                        ry = int(
+                            right_hand.landmark[8].y * h
+                        )
+
+                        cx = (lx + rx) // 2
+                        cy = (ly + ry) // 2 - 50
+
+                        draw_hover_progress(
+                            img,
+                            (cx, cy),
+                            exit_elapsed,
+                            2
+                        )
+
+                    # -------------------------------------------------
+                    # Streamlit cannot "break" the app like the local
+                    # OpenCV loop. We simply stop processing this frame.
+                    # -------------------------------------------------
+
+                    if exit_flag:
+
+                        return av.VideoFrame.from_ndarray(
+                            img,
+                            format="bgr24"
+                        )
+
+                    # ---------------------------------------------
+                    # Two-hand handler
+                    # ---------------------------------------------
+
+                    handle_two_hands(
+                        left_hand,
+                        right_hand
+                    )
+
+        # =================================================
+        # UI
+        # =================================================
+
+        draw_text(
+            img,
+            self.final_pred,
+            word_builder.word,
+            word_builder.cursor_pos,
+            game.target_word,
+            game.game_result,
+            self.cursor_visible
+        )
+
+        draw_buttons(
+            img,
+            hovering
+        )
+
+        # =================================================
+        # RETURN FRAME
+        # =================================================
 
         return av.VideoFrame.from_ndarray(
             img,
@@ -90,42 +380,55 @@ class ASLProcessor(VideoProcessorBase):
 
 
 # =========================================================
-# WORD GAME
+# WORD GAME PAGE
 # =========================================================
 
 def word_game_page():
 
-    st.title("🎯 ASL Word Game")
+    st.title("🖐️ ASL Trainer")
 
-    # ---------------------------------------------
+    # -----------------------------------------------------
+    # Initialize game
+    # -----------------------------------------------------
+
+    if "game_initialized" not in st.session_state:
+
+        game.new_game(
+            generate_word
+        )
+
+        word_builder.word = ""
+        word_builder.cursor_pos = 0
+
+        st.session_state.game_initialized = True
+
+    # -----------------------------------------------------
     # Target word
-    # ---------------------------------------------
+    # -----------------------------------------------------
 
-    if "target_word" not in st.session_state:
-        st.session_state.target_word = "HELLO"
-
-    st.subheader("Target")
+    st.subheader("🎯 Target Word")
 
     st.markdown(
-        f"### {st.session_state.target_word}"
+        f"# {game.target_word}"
     )
 
-    # ---------------------------------------------
+    # -----------------------------------------------------
     # Camera
-    # ---------------------------------------------
+    # -----------------------------------------------------
 
     webrtc_streamer(
-        key="asl_word_game",
+        key="asl_trainer",
         video_processor_factory=ASLProcessor,
         media_stream_constraints={
             "video": True,
             "audio": False
-        }
+        },
+        async_processing=True
     )
 
-    # ---------------------------------------------
-    # User's generated word
-    # ---------------------------------------------
+    # -----------------------------------------------------
+    # Current word
+    # -----------------------------------------------------
 
     st.subheader("Your Input")
 
@@ -133,9 +436,23 @@ def word_game_page():
         f"### {word_builder.word}"
     )
 
-    # ---------------------------------------------
-    # Game controls
-    # ---------------------------------------------
+    # -----------------------------------------------------
+    # Game result
+    # -----------------------------------------------------
+
+    if game.game_result:
+
+        if game.game_result == "correct":
+
+            st.success("🎉 Correct!")
+
+        elif game.game_result == "incorrect":
+
+            st.error("❌ Try again!")
+
+    # -----------------------------------------------------
+    # Streamlit fallback controls
+    # -----------------------------------------------------
 
     col1, col2 = st.columns(2)
 
@@ -146,16 +463,15 @@ def word_game_page():
             use_container_width=True
         ):
 
-            if (
-                word_builder.word
-                == st.session_state.target_word
-            ):
+            game.submit_word(
+                word_builder.word,
+                check_match
+            )
 
-                st.success("🎉 Correct!")
+            word_builder.word = ""
+            word_builder.cursor_pos = 0
 
-            else:
-
-                st.error("❌ Try again!")
+            st.rerun()
 
     with col2:
 
@@ -164,18 +480,12 @@ def word_game_page():
             use_container_width=True
         ):
 
-            words = [
-                "APPLE",
-                "TRAIN",
-                "WORLD",
-                "HELLO"
-            ]
-
-            st.session_state.target_word = (
-                random.choice(words)
+            game.new_game(
+                generate_word
             )
 
             word_builder.word = ""
+            word_builder.cursor_pos = 0
 
             st.rerun()
 
@@ -191,16 +501,15 @@ st.set_page_config(
 )
 
 
-# ---------------------------------------------------------
-# Navigation
-# ---------------------------------------------------------
+# =========================================================
+# SIDEBAR
+# =========================================================
 
 st.sidebar.title("🖐️ ASL Trainer")
 
 page = st.sidebar.radio(
     "Choose Mode",
     [
-        "🎓 Learn ASL",
         "🎯 Word Game"
     ]
 )
@@ -209,7 +518,6 @@ page = st.sidebar.radio(
 # =========================================================
 # PAGE ROUTING
 # =========================================================
-
 
 if page == "🎯 Word Game":
 
