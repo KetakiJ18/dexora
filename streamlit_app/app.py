@@ -15,7 +15,6 @@ import random
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 
 # Learning page
-from pages.learning import learning_page
 
 # Existing modules
 from core.landmark_processor import process_landmarks
