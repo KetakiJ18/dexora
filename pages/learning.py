@@ -1,3 +1,6 @@
+import streamlit as st
+
+
 LETTERS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 
@@ -45,3 +48,43 @@ class LearningEngine:
 
     def is_complete(self):
         return self.completed
+
+
+def learning_page():
+
+    st.title("🎓 Learn ASL")
+
+    if "learning_engine" not in st.session_state:
+        st.session_state.learning_engine = LearningEngine()
+
+    engine = st.session_state.learning_engine
+
+    if engine.is_complete():
+
+        st.success("🎉 You completed all 26 letters!")
+
+        if st.button("Restart Learning"):
+            engine.reset()
+            st.rerun()
+
+        return
+
+    st.subheader(
+        f"Letter {engine.progress} of {engine.total_letters}"
+    )
+
+    st.markdown(
+        f"# {engine.current_letter}"
+    )
+
+    st.progress(
+        engine.progress / engine.total_letters
+    )
+
+    if st.button("Next Letter"):
+        engine.advance()
+        st.rerun()
+
+    if st.button("Restart"):
+        engine.reset()
+        st.rerun()
