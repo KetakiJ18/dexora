@@ -210,11 +210,7 @@ page = st.sidebar.radio(
 # PAGE ROUTING
 # =========================================================
 
-if page == "🎓 Learn ASL":
 
-    learning_page()
-
-
-elif page == "🎯 Word Game":
+if page == "🎯 Word Game":
 
     word_game_page()
